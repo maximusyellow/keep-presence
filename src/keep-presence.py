@@ -3,12 +3,13 @@
 import argparse
 import time
 from datetime import datetime
-from pynput.mouse import Controller as MouseController
-from pynput.keyboard import Key, Controller as KeyboardController
+from pynput import mouse as m
+from pynput import keyboard as k
+from inputs import get_gamepad
 import random
 
-mouse = MouseController()
-keyboard = KeyboardController()
+mouse = m.Controller()
+keyboard = k.Controller()
 
 MOVE_MOUSE = False
 SCROLL_ACTION = False
@@ -22,10 +23,12 @@ RAND_INTERVAL_STOP = 0
 move_mouse_every_seconds = 300
 mouse_direction = 0
 
+oldTime = None
+lastTime = None
 
 def define_custom_seconds():
     global move_mouse_every_seconds, PIXELS_TO_MOVE, PRESS_SHIFT_KEY, MOVE_MOUSE, SCROLL_ACTION, \
-        MOUSE_DIRECTION_DELTA, RANDOM_MODE, RAND_INTERVAL_START, RAND_INTERVAL_STOP
+        MOUSE_DIRECTION_DELTA, RANDOM_MODE, RAND_INTERVAL_START, RAND_INTERVAL_STOP, oldTime, lastTime
 
     parser = argparse.ArgumentParser(
         description="This program moves the mouse or press a key when it detects that you are away. "
@@ -58,6 +61,11 @@ def define_custom_seconds():
              "Execute actions based on a random interval between start and stop seconds. "
              "Note: Overwrites the seconds argument.")
 
+    parser.add_argument(
+        "-g", "--game", action='store_true',
+        help="Enables tracking of mouse/keyboard events when playing games"
+             "If a gamepad is connected, the program will not take any action")
+
     args = parser.parse_args()
     mode = args.mode
     random_seconds_interval = args.random
@@ -79,6 +87,16 @@ def define_custom_seconds():
         if RAND_INTERVAL_START > RAND_INTERVAL_STOP:
             print("Error: Random initial number needs to be lower than random limit number.")
             exit()
+
+    if args.game:
+        lastTime = time.time()
+        mouseListener = m.Listener(on_move=on_move,on_click=on_click,on_scroll=on_scroll)
+        mouseListener.start()
+
+        kbListener = k.Listener(on_press=on_press)
+        kbListener.start()
+
+        oldTime = lastTime
 
     is_both_enabled = 'both' == mode
     is_keyboard_enabled = 'keyboard' == mode or is_both_enabled
@@ -140,8 +158,8 @@ def mouse_wheel_scroll():
 
 
 def press_shift_key():
-    keyboard.press(Key.shift)
-    keyboard.release(Key.shift)
+    keyboard.press(keyboard.Key.shift)
+    keyboard.release(keyboard.Key.shift)
     print(get_now_timestamp(), 'Shift key pressed')
 
 
@@ -162,6 +180,21 @@ def execute_keep_awake_action():
     if PRESS_SHIFT_KEY:
         press_shift_key()
 
+def on_move(x, y):
+    global lastTime
+    lastTime = time.time()
+
+def on_click(x, y, button, pressed):
+    global lastTime
+    lastTime = time.time()
+
+def on_scroll(x, y, dx, dy):
+    global lastTime
+    lastTime = time.time()
+
+def on_press(key):
+    global lastTime
+    lastTime = time.time()
 
 define_custom_seconds()
 lastSavePosition = (0, 0)
@@ -169,16 +202,28 @@ lastSavePosition = (0, 0)
 try:
     while 1:
         currentPosition = mouse.position
-        is_user_away = currentPosition == lastSavePosition
+        if oldTime:
+            is_user_away = currentPosition == lastSavePosition and oldTime == lastTime
+        else:
+            is_user_away = currentPosition == lastSavePosition
 
         if is_user_away:
-            execute_keep_awake_action()
-            currentPosition = mouse.position
+            try:
+                if oldTime:
+                    events = get_gamepad()
+                    oldTime = lastTime
+                else:
+                    execute_keep_awake_action()
+                    currentPosition = mouse.position
+            except Exception:
+                pass
 
         if not is_user_away:
             print(get_now_timestamp(), 'User activity detected')
 
         lastSavePosition = currentPosition
+        if oldTime:
+            oldTime = lastTime
 
         if RANDOM_MODE:
             rand_delay = random.randint(RAND_INTERVAL_START, RAND_INTERVAL_STOP)
